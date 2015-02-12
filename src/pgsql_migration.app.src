@@ -1,0 +1,7 @@
+{application, pgsql_migration, [
+  {description, "PostgreSQL migrations for Erlang"},
+  {vsn, git},
+  {registered, []},
+  {applications, [kernel, stdlib, eql]},
+  {env, []}
+]}.
