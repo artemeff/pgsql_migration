@@ -17,10 +17,13 @@ migrate(Conn, Version, Dir) ->
             up_to_date;
         {ok, _, [{Top} | _]} when Top < BinVersion ->
             %% upgrade path
+            FromVersion = binary_to_list(Top),
             Upgraded = lists:foldl(fun({V, UpDown}, Acc) ->
                 if
-                    V =< Version -> up(Conn, V, UpDown), [V | Acc];
-                    true -> Acc
+                    V =< Version andalso V > FromVersion ->
+                        up(Conn, V, UpDown), [V | Acc];
+                    true ->
+                        Acc
                 end
             end, [], Migrations),
             {up, lists:reverse(Upgraded)};
@@ -28,8 +31,10 @@ migrate(Conn, Version, Dir) ->
             %% downgrade path
             Downgraded = lists:foldl(fun({V, UpDown}, Acc) ->
                 if
-                    V >= Version -> down(Conn, V, UpDown), [V | Acc];
-                    true -> Acc
+                    V >= Version ->
+                        down(Conn, V, UpDown), [V | Acc];
+                    true ->
+                        Acc
                 end
             end, [], Migrations),
             {down, lists:reverse(Downgraded)};
@@ -59,17 +64,36 @@ use_driver(Name) ->
 %%
 
 up(Conn, Version, UpDown) ->
-    ?DRIVER:squery(Conn, eql:get_query(up, UpDown)),
-    ?DRIVER:equery(Conn,
-        "INSERT INTO migrations (id) VALUES ($1)", [Version]).
+    Query = eql:get_query(up, UpDown),
+    if_ok(Version, ?DRIVER:squery(Conn, Query), fun() ->
+        update_version(up, Conn, Version)
+    end).
 
 down(Conn, Version, UpDown) ->
-    ?DRIVER:squery(Conn, eql:get_query(down, UpDown)),
-    ?DRIVER:equery(Conn,
-        "DELETE FROM migrations WHERE id = $1", [Version]).
+    Query = eql:get_query(down, UpDown),
+    if_ok(Version, ?DRIVER:squery(Conn, Query), fun() ->
+        update_version(down, Conn, Version)
+    end).
+
+if_ok(_, R, Fn) when is_list(R) -> Fn();
+if_ok(_, {ok, _}, Fn) -> Fn();
+if_ok(_, {ok, _, _}, Fn) -> Fn();
+if_ok(_, {ok, _, _, _}, Fn) -> Fn();
+if_ok(V, {error, Reason}, _) ->
+    throw(lists:flatten(format_error(V, Reason))).
+
+format_error(V, {error, _, _, Msg, _}) ->
+    io_lib:format("migration_error (~s): ~s", [V, Msg]);
+format_error(V, Reason) ->
+    io_lib:format("migration_error (~s): ~p", [V, Reason]).
 
 version_from_filename(Filename) ->
     filename:rootname(Filename).
+
+update_version(up, Conn, V) ->
+    ?DRIVER:equery(Conn, "INSERT INTO migrations (id) VALUES ($1)", [V]);
+update_version(down, Conn, V) ->
+    ?DRIVER:equery(Conn, "DELETE FROM migrations WHERE id = $1", [V]).
 
 init_migrations(Conn) ->
     {ok, _, _} = ?DRIVER:squery(Conn,
