@@ -12,7 +12,7 @@ migrate(Conn, Version, Dir) ->
         {error, {error, error, <<"42P01">>, _, _}} ->
             %% init migrations and restart
             init_migrations(Conn),
-            migrate(Conn, Version, Migrations);
+            migrate(Conn, Version, Dir);
         {ok, _, [{BinVersion} | _]} ->
             up_to_date;
         {ok, _, [{Top} | _]} when Top < BinVersion ->
