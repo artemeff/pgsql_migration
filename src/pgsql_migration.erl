@@ -21,7 +21,7 @@ migrate(Conn, Version, Dir) ->
             Upgraded = lists:foldl(fun({V, UpDown}, Acc) ->
                 if
                     V =< Version andalso V > FromVersion ->
-                        up(Conn, V, UpDown), [V | Acc];
+                        [exec(up, Conn, V, UpDown) | Acc];
                     true ->
                         Acc
                 end
@@ -32,7 +32,7 @@ migrate(Conn, Version, Dir) ->
             Downgraded = lists:foldl(fun({V, UpDown}, Acc) ->
                 if
                     V >= Version ->
-                        down(Conn, V, UpDown), [V | Acc];
+                        [exec(down, Conn, V, UpDown) | Acc];
                     true ->
                         Acc
                 end
@@ -42,8 +42,10 @@ migrate(Conn, Version, Dir) ->
             %% full upgrade path
             Upgraded = lists:foldl(fun({V, UpDown}, Acc) ->
                 if
-                    V =< Version -> up(Conn, V, UpDown), [V | Acc];
-                    true -> Acc
+                    V =< Version ->
+                        [exec(up, Conn, V, UpDown) | Acc];
+                    true ->
+                        Acc
                 end
             end, [], Migrations),
             {up, lists:reverse(Upgraded)}
@@ -63,29 +65,43 @@ use_driver(Name) ->
 %% Private
 %%
 
-up(Conn, Version, UpDown) ->
-    Query = eql:get_query(up, UpDown),
-    if_ok(Version, ?DRIVER:squery(Conn, Query), fun() ->
-        update_version(up, Conn, Version)
-    end).
+exec(Type, Conn, Version, UpDown) ->
+    Query = eql:get_query(Type, UpDown),
+    case if_ok(exec_transaction(Conn, Query)) of
+        skip ->
+            {Version, skip};
+        ok ->
+            update_version(Type, Conn, Version),
+            commit_transaction(Conn),
+            {Version, ok};
+        {error, Reason} ->
+            rollback_transaction(Conn),
+            Err = io_lib:format("migration error: ~p~n", [Reason]),
+            throw(lists:flatten(Err))
+    end.
 
-down(Conn, Version, UpDown) ->
-    Query = eql:get_query(down, UpDown),
-    if_ok(Version, ?DRIVER:squery(Conn, Query), fun() ->
-        update_version(down, Conn, Version)
-    end).
+exec_transaction(_, undefined) -> skip;
+exec_transaction(Conn, Query) ->
+    ?DRIVER:squery(Conn, "BEGIN;"),
+    ?DRIVER:squery(Conn, Query).
 
-if_ok(_, R, Fn) when is_list(R) -> Fn();
-if_ok(_, {ok, _}, Fn) -> Fn();
-if_ok(_, {ok, _, _}, Fn) -> Fn();
-if_ok(_, {ok, _, _, _}, Fn) -> Fn();
-if_ok(V, {error, Reason}, _) ->
-    throw(lists:flatten(format_error(V, Reason))).
+commit_transaction(Conn) ->
+    ?DRIVER:squery(Conn, "COMMIT;").
 
-format_error(V, {error, _, _, Msg, _}) ->
-    io_lib:format("migration_error (~s): ~s", [V, Msg]);
-format_error(V, Reason) ->
-    io_lib:format("migration_error (~s): ~p", [V, Reason]).
+rollback_transaction(Conn) ->
+    ?DRIVER:squery(Conn, "ROLLBACK;").
+
+if_ok(skip) -> skip;
+if_ok(Rs) when is_list(Rs) ->
+    Result = lists:map(fun(R) -> if_ok(R) end, Rs),
+    case lists:keyfind(error, 1, Result) of
+        false -> ok;
+        Error -> Error
+    end;
+if_ok({ok, _}) -> ok;
+if_ok({ok, _, _}) -> ok;
+if_ok({ok, _, _, _}) -> ok;
+if_ok(Error) -> {error, Error}.
 
 version_from_filename(Filename) ->
     filename:rootname(Filename).
