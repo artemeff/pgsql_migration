@@ -20,13 +20,13 @@ DROP TABLE users;
 ```
 
 ```erlang
-pgsql_migraion:migrate(Conn, "priv/migrations").
+pgsql_migration:migrate(Conn, "priv/migrations").
 ```
 
 You can rename pgsql driver, if you use [epgsql](https://github.com/epgsql/epgsql) 3.0 or newer:
 
 ```erlang
-pgsql_migraion:use_driver(epgsql).
+pgsql_migration:use_driver(epgsql).
 ```
 
 ---
