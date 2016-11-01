@@ -122,5 +122,5 @@ init_migrations(Conn) ->
         "datetime TIMESTAMP DEFAULT CURRENT_TIMESTAMP)").
 
 now_ts() ->
-    {Mega, Seconds, _} = now(),
+    {Mega, Seconds, _} = os:timestamp(),
     Mega * 1000000 + Seconds.
